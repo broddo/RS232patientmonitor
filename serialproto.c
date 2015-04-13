@@ -99,13 +99,10 @@ typedef struct
 
 typedef struct
 {
-	uint8_t length;
-	uint8_t param_count;
-	uint8_t reserved;
-	uint8_t scale_ID;
-	uint16_t top_val;
-	uint16_t bot_val;
-} __attribute__((__packed__)) subpacket_header_t
+	uint8_t 	sync_byte;
+	uint16_t 	length;
+	uint8_t		transaction_code;
+} __attribute__((__packed__)) packet_header_t;
 
 static int set_interface_attribs (int fd, int speed, int parity)
 {
@@ -325,78 +322,96 @@ void decode_patient_data(ndp_spo2_t patient_data)
 	printf("%s", units);
 }
 
-void decode_parameter_data(uint8_t *buf, buf_length)
+void decode_parameter_data(uint8_t *serial_data, int serial_data_length)
 {
-	uint8_t waveform_id_bytes[8];
-	uint8_t no_param_subpackets;
-	subpacket_header_t subpacket_header;
 	int i;
+	unsigned int offset = 20;
+	struct
+	{
+		uint8_t dummy1;
+		uint8_t shutdnf;
+		uint8_t waveform_id_bytes[8];
+		uint8_t dummy2[8];
+		uint8_t dummy3;
+		uint8_t no_param_subpackets;
+	} __attribute__((__packed__)) parameter_data_header_t;
+	
+	typedef struct
+	{
+		uint8_t length;
+		uint8_t param_count;
+		uint8_t reserved;
+		uint8_t scale_ID;
+		uint16_t top_val;
+		uint16_t bot_val;
+	} __attribute__((__packed__)) subpacket_header_t;
+	
+	parameter_data_header_t *parameter_data_header;
+	subpacket_header_t *subpacket_header;
+
+	parameter_data_header = *(parmeter_data_header_t*)serial_data;
 	
 	/* Check shutdown byte */
-	if (buf[5] == 0x01)
+	if (parameter_data_header->shutdnf == 0x01)
 	{
 		printf("Monitor entering standby state\n");
 		return;
 	}
-	else if(buf[5] == 0x02)
+	else if(parameter_data_header->shutdnf == 0x02)
 	{
 		printf("Patient discharged\n");
 		return;
 	}
 	
-	/* Pull waveform IDs */
-	memcpy(waveform_id_bytes, &buf[6], 8);
-	no_param_subpackets = buf[23];
-	
 	/* Handle every subpacket */
-	for (i=0;i<no_param_subpackets;i++)
-	{
-		memcpy(subpacket_header, )	
+	subpacket_header = malloc(parameter_data-header->no_param_subpackets*sizeof(subpacket_header));
+	
+	for (i=0;i<parameter_data_header->no_param_subpackets;i++)
+	{	
+		/* Grab the subpacket header */
+		/* Note, if I'm dealing with all the subpackets now, then I probably don't need to store
+		 * them all in a subpacket_header buffer
+		 */
+		memcpy(&subpacket_header[i], serial_data_length+offset, sizeof(subpacket_header_t));	
 	}
 	
 	
-	
+	free(subpacket_header);
 }
 
 int read_data(int fd)
 {
-	uint8_t serial_header[4];
-	uint8_t serial_sync_byte;
-	uint16_t serial_data_length;
-	uint8_t serial_transaction_code;
+	packet_header_t serial_header;
 	uint8_t *serial_data;
 	int n;
 	int i;
 	uint8_t checksum = 0;
 	
-	n = read (fd, serial_header, sizeof(serial_header));  
+	n = read (fd, &serial_header, sizeof(packet_header_t));  
 	
 	if (n < 4)
 	{
 		return (1); 	// Header packet too small
 	}
 	
-	/* Parse the header */
-	serial_sync_byte = serial_header[0];
-	serial_data_length = *(uint16_t*)serial_header[1];
-	serial_transaction_code = serial_header[3];
-	
-	if (serial_sync_byte != SYNC_BYTE)
+	/* Check the header for errors */
+	if (serial_header.sync_byte != SYNC_BYTE)
 	{
 		return (2);	// Sync byte not received (out of sync)
 	}
 	
 	/* Grab the rest of the data */
-	serial_data = malloc(serial_data_length*sizeof(uint8_t));
-	n = read (fd, serial_data, serial_data_length);
-	if (n != serial_data_length)
+	serial_data = malloc(serial_header.lenth*sizeof(uint8_t));
+	n = read (fd, serial_data, serial_header.length);
+	if (n != serial_header.length)
 	{
+		free(serial_data);
 		return (3); 	// Data packet too small
 	}
 	
 	
 	/* Checksum = byte wise sum of header packet + data packet (excluding checksum byte) */
-	for (i=0;i<sizeof(serial_header);i++)
+	for (i=0;i<sizeof(packet_header_t);i++)
 	{
 		checksum += serial_header[i];	
 	}
@@ -406,31 +421,34 @@ int read_data(int fd)
 	}
 	
 	/* Compare checksum */
-	if (checksum != serial_data[serial_data_length])
+	if (checksum != serial_data[serial_header.length])
 	{
 		perror("Checksum failed on received data\n");
+		free(serial_data);
 		return (4);	// Checksum failed
 	}
 
 	/* Decode message */
-	switch(buf[3])
+	switch(serial_header.transaction_code)
 	{
 		case STATUS_COMMAND:
-			decode_status_command(serial_data, serial_data_length);
+			decode_status_command(serial_data, serial_header.length);
 			break;
 		case SPO2_PULS_NIBP:
 			ndp_spo2_t patient_data;
-			memcpy(&patient_data, serial_data, serial_data_length)
+			memcpy(&patient_data, serial_data, serial_header.length)
 			decode_patient_data(patient_data);
 			break;
 		case PARAMETER_DATA:
 		case PARAMETER_DATA_2:
-			decode_parameter_data(serial_data, serial_data_length);
+			decode_parameter_data(serial_data, serial_header.length);
 			break;
 		default:
-			printf("Transaction code %x received - no handler available\n", buf[3]);
+			printf("Transaction code %x received - no handler available\n", serial_header.transaction_code);
 			break;
 	}
+	
+	free(serial_data);
 	return (0);
 }
 
