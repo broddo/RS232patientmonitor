@@ -16,28 +16,28 @@
 #define RESERVED		0x09
 
 /* Languages codes */
-#define	ENGLISH	0x01
-#define	GERMAN	0x02
-#define	FRENCH	0x03
-#define	SPANISH	0x04
-#define	ITALIAN	0x05
-#define	DUTCH	0x06
-#define	SWEDISH	0x07
+#define	ENGLISH			0x01
+#define	GERMAN			0x02
+#define	FRENCH			0x03
+#define	SPANISH			0x04
+#define	ITALIAN			0x05
+#define	DUTCH			0x06
+#define	SWEDISH			0x07
 #define	JAPANESE_KATAKANA	0x08
-#define	JAPANESE_KANJI	0x09
+#define	JAPANESE_KANJI		0x09
 #define	JAPANESE_HIRAGANA	0x0A
-#define	DANISH	0x0B
-#define	PORTUGUESE	0x0C
-#define	GREEK	0x0D
-#define	FINNISH	0x0E
-#define	NORWEGIAN	0x0F
-#define	POLISH	0x10
-#define	HUNGARIAN	0x11
-#define	ROMANIAN	0x12
-#define	SLOVAKIAN	0x13
-#define	RUSSIAN	0x14
-#define	CHINESE	0x15
-#define	ARABIC	0x16
+#define	DANISH			0x0B
+#define	PORTUGUESE		0x0C
+#define	GREEK			0x0D
+#define	FINNISH			0x0E
+#define	NORWEGIAN		0x0F
+#define	POLISH			0x10
+#define	HUNGARIAN		0x11
+#define	ROMANIAN		0x12
+#define	SLOVAKIAN		0x13
+#define	RUSSIAN			0x14
+#define	CHINESE			0x15
+#define	ARABIC			0x16
 
 /* Server-status */
 #define ACTIVE_STATE			0x00
@@ -120,7 +120,6 @@ static void send_command(int fd, uint8_t command)
 	uint8_t msg_length = sizeof(msg);
 	uint8_t checksum = 0;
 
-
 	msg[0] = SYNC_BYTE;	// Sync byte
 	msg[1] = 0x02;		// Length (LSB)
 	msg[2] = 0x00;		// Length (MSB)
@@ -136,46 +135,6 @@ static void send_command(int fd, uint8_t command)
 	msg[4] = checksum;
 
 	write(fd, msg, msg_length);
-}
-
-int decode_data(uint8_t *buf, uint8_t buf_length)
-{
-	int i;
-	uint16_t msg_length;
-	uint8_t checksum;
-
-        /* Check for sync_byte */
-        if (buf[0] != SYNC_BYTE)
-        {
-                perror("No sync byte in received data\n"); 
-                return (1);
-        }
-
-	/* Get message length - note length excludes sync byte and both length bytes*/
-	msg_length = *(uint16_t*)(buf+1);
-
-	/* Check for valid checksum */
-	for (i=0;i<msg_length+2;i++)
-	{
-		checksum += buf[i];
-	}
-	if (checksum != buf[msg_length])
-	{
-		perror("Checksum failed on received data\n");
-		return (2);	// Checksum failed
-	}
-
-	/* Decode message */
-	switch(buf[3])
-	{
-		case STATUS_COMMAND:
-			decode_status_command(&buf[4], msg_length);
-			break;
-		default:
-			printf("Transaction code %x received - no handler available\n", buf[3]);
-			break;
-	}
-	return (0);
 }
 
 void decode_status_command(uint8_t *msg, uint8_t msg_length)
@@ -288,6 +247,46 @@ void decode_status_command(uint8_t *msg, uint8_t msg_length)
                 j++;
         }
 	printf("\tProtocol rev: %s\n", protocol_rev);
+}
+
+int decode_data(uint8_t *buf, uint8_t buf_length)
+{
+	int i;
+	uint16_t msg_length;
+	uint8_t checksum;
+
+        /* Check for sync_byte */
+        if (buf[0] != SYNC_BYTE)
+        {
+                perror("No sync byte in received data\n"); 
+                return (1);
+        }
+
+	/* Get message length - note length excludes sync byte and both length bytes*/
+	msg_length = *(uint16_t*)(buf+1);
+
+	/* Check for valid checksum */
+	for (i=0;i<msg_length+2;i++)
+	{
+		checksum += buf[i];
+	}
+	if (checksum != buf[msg_length])
+	{
+		perror("Checksum failed on received data\n");
+		return (2);	// Checksum failed
+	}
+
+	/* Decode message */
+	switch(buf[3])
+	{
+		case STATUS_COMMAND:
+			decode_status_command(&buf[4], msg_length);
+			break;
+		default:
+			printf("Transaction code %x received - no handler available\n", buf[3]);
+			break;
+	}
+	return (0);
 }
 
 int main(void)
