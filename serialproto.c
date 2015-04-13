@@ -8,6 +8,8 @@
 
 /* system commands */
 #define SYNC_BYTE 		0xA5
+#define PATIENT_DEMOGRAPHICS	0x56
+#define SPO2_PULS_NIBP		0x75
 #define STATUS_COMMAND		0x50
 
 /* Device Types */
@@ -55,6 +57,41 @@ typedef struct
 	uint8_t sec;
 	uint8_t spare;
 } __attribute__((__packed__)) date_t;
+
+typedef struct
+{
+	char hwsn[11];
+	
+	struct
+	{
+		uint8_t alarm;
+		uint8_t param_cond;
+		uint8_t percent;
+	} __attribute__((__packed__)) SPO2;
+	
+	uint8_t pulse;
+	
+	struct
+	{
+		uint8_t units;
+		
+		uint8_t mean_alarm;
+		uint8_t mean_param_cond;
+		uint8_t mean_value;
+		
+		uint8_t sys_alarm;
+		uint8_t sys_param_cond;
+		uint8_t sys_value;
+		
+		uint8_t dia_alarm;
+		uint8_t dia_param_cond;
+		uint8_t dia_value;
+		
+	} __attribute__((__packed__)) NiBP;
+	
+	uint8_t checksum;
+	
+} __attribute__((__packed__)) ndp_spo2_t;
 
 static int set_interface_attribs (int fd, int speed, int parity)
 {
@@ -249,6 +286,31 @@ void decode_status_command(uint8_t *msg, uint8_t msg_length)
 	printf("\tProtocol rev: %s\n", protocol_rev);
 }
 
+void decode_patient_data(ndp_spo2_t patient_data)
+{
+	char units[6];
+	uint8_t multiplier = 1;
+	
+	if (patient_data.NiBP.units == 0x0B)
+	{
+		strcpy(units, "mmHg\n");
+	}
+	else if (patient_data.NiBP.units == 0x0C)
+	{
+		strcpy(units, "kPa\n");
+		multiplier = 0.1;
+	}
+	printf("NBP & SPO2 Data received:\n");
+	printf("\tSPO2 = %d%%\n", patient_data.SPO2.percent);
+	printf("\tPulse = %d BPM\n", patient_data.pulse);
+	printf("\tMean BP = %.1f ", patient_data.NiBP.mean_value*multiplier);
+	printf("%s", units);
+	printf("\Systolic BP = %.1f ", patient_data.NiBP.sys_value*multiplier);
+	printf("%s", units);
+	printf("\tDiastolic BP = %.1f ", patient_data.NiBP.dia_value*multiplier);
+	printf("%s", units);
+}
+
 int decode_data(uint8_t *buf, uint8_t buf_length)
 {
 	int i;
@@ -281,6 +343,11 @@ int decode_data(uint8_t *buf, uint8_t buf_length)
 	{
 		case STATUS_COMMAND:
 			decode_status_command(&buf[4], msg_length);
+			break;
+		case SPO2_PULS_NIBP:
+			ndp_spo2_t patient_data;
+			memcpy(&patient_data, &buf[4], msg_length)
+			decode_patient_data(patient_data);
 			break;
 		default:
 			printf("Transaction code %x received - no handler available\n", buf[3]);
