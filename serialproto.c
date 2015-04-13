@@ -7,8 +7,12 @@
 #include <stdint.h>
 
 /* system commands */
+#define NAK			0x15
+#define EOT			0x04
 #define SYNC_BYTE 		0xA5
 #define PATIENT_DEMOGRAPHICS	0x56
+#define PARAMETER_DATA		0x57
+#define PARAMETER_DATA_2	0x77
 #define SPO2_PULS_NIBP		0x75
 #define STATUS_COMMAND		0x50
 
@@ -92,6 +96,16 @@ typedef struct
 	uint8_t checksum;
 	
 } __attribute__((__packed__)) ndp_spo2_t;
+
+typedef struct
+{
+	uint8_t length;
+	uint8_t param_count;
+	uint8_t reserved;
+	uint8_t scale_ID;
+	uint16_t top_val;
+	uint16_t bot_val;
+} __attribute__((__packed__)) subpacket_header_t
 
 static int set_interface_attribs (int fd, int speed, int parity)
 {
@@ -311,43 +325,107 @@ void decode_patient_data(ndp_spo2_t patient_data)
 	printf("%s", units);
 }
 
-int decode_data(uint8_t *buf, uint8_t buf_length)
+void decode_parameter_data(uint8_t *buf, buf_length)
 {
+	uint8_t waveform_id_bytes[8];
+	uint8_t no_param_subpackets;
+	subpacket_header_t subpacket_header;
 	int i;
-	uint16_t msg_length;
-	uint8_t checksum;
-
-        /* Check for sync_byte */
-        if (buf[0] != SYNC_BYTE)
-        {
-                perror("No sync byte in received data\n"); 
-                return (1);
-        }
-
-	/* Get message length - note length excludes sync byte and both length bytes*/
-	msg_length = *(uint16_t*)(buf+1);
-
-	/* Check for valid checksum */
-	for (i=0;i<msg_length+2;i++)
+	
+	/* Check shutdown byte */
+	if (buf[5] == 0x01)
 	{
-		checksum += buf[i];
+		printf("Monitor entering standby state\n");
+		return;
 	}
-	if (checksum != buf[msg_length])
+	else if(buf[5] == 0x02)
+	{
+		printf("Patient discharged\n");
+		return;
+	}
+	
+	/* Pull waveform IDs */
+	memcpy(waveform_id_bytes, &buf[6], 8);
+	no_param_subpackets = buf[23];
+	
+	/* Handle every subpacket */
+	for (i=0;i<no_param_subpackets;i++)
+	{
+		memcpy(subpacket_header, )	
+	}
+	
+	
+	
+}
+
+int read_data(int fd)
+{
+	uint8_t serial_header[4];
+	uint8_t serial_sync_byte;
+	uint16_t serial_data_length;
+	uint8_t serial_transaction_code;
+	uint8_t *serial_data;
+	int n;
+	int i;
+	uint8_t checksum = 0;
+	
+	n = read (fd, serial_header, sizeof(serial_header));  
+	
+	if (n < 4)
+	{
+		return (1); 	// Header packet too small
+	}
+	
+	/* Parse the header */
+	serial_sync_byte = serial_header[0];
+	serial_data_length = *(uint16_t*)serial_header[1];
+	serial_transaction_code = serial_header[3];
+	
+	if (serial_sync_byte != SYNC_BYTE)
+	{
+		return (2);	// Sync byte not received (out of sync)
+	}
+	
+	/* Grab the rest of the data */
+	serial_data = malloc(serial_data_length*sizeof(uint8_t));
+	n = read (fd, serial_data, serial_data_length);
+	if (n != serial_data_length)
+	{
+		return (3); 	// Data packet too small
+	}
+	
+	
+	/* Checksum = byte wise sum of header packet + data packet (excluding checksum byte) */
+	for (i=0;i<sizeof(serial_header);i++)
+	{
+		checksum += serial_header[i];	
+	}
+	for (i=0;i<sizeof(serial_data)-1;i++)
+	{
+		checksum += serial_data[i];
+	}
+	
+	/* Compare checksum */
+	if (checksum != serial_data[serial_data_length])
 	{
 		perror("Checksum failed on received data\n");
-		return (2);	// Checksum failed
+		return (4);	// Checksum failed
 	}
 
 	/* Decode message */
 	switch(buf[3])
 	{
 		case STATUS_COMMAND:
-			decode_status_command(&buf[4], msg_length);
+			decode_status_command(serial_data, serial_data_length);
 			break;
 		case SPO2_PULS_NIBP:
 			ndp_spo2_t patient_data;
-			memcpy(&patient_data, &buf[4], msg_length)
+			memcpy(&patient_data, serial_data, serial_data_length)
 			decode_patient_data(patient_data);
+			break;
+		case PARAMETER_DATA:
+		case PARAMETER_DATA_2:
+			decode_parameter_data(serial_data, serial_data_length);
 			break;
 		default:
 			printf("Transaction code %x received - no handler available\n", buf[3]);
@@ -374,7 +452,7 @@ int main(void)
 
 	usleep ((7 + 25) * 100);             // sleep enough to transmit the 7 plus
                                      // receive 25:  approx 100 uS per char transmit
-	char buf [100];
-	int n = read (fd, buf, sizeof buf);  // read up to 100 characters if ready to read
-	decode_data(buf, sizeof(buf));
+	
+	read_data(fd);
+
 }
